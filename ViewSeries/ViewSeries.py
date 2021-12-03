@@ -1,3 +1,26 @@
+# ViewSeries.py
+#
+# This is a simple example to get familar with programming in Slicer.
+#
+# The list of patients is extracted from the DICOM database and displayed. When
+# the user clicks on a patient, the studies corresponding the patient are
+# listed. Clicking on a study populates the viewer, where one view is created
+# for each series. The corresponding data is displayed in each viewer.
+#
+# Notes:
+#     https://slicer.readthedocs.io/en/latest/developer_guide/script_repository.html#load-dicom-files-into-the-scene-from-a-folder
+#     https://www.tutorialspoint.com/pyqt/pyqt_qlistwidget.htm
+#     https://stackoverflow.com/questions/22571706/how-to-list-all-items-from-qlistwidget
+#     https://stackoverflow.com/questions/23835847/how-to-remove-item-from-qlistwidget/23836142
+#
+# To do:
+#   Try with QListView instead of QListWidget
+#
+# Deepa Krishnaswamy
+# December 2021
+# Brigham and Women's Hospital
+################################################################################
+
 # import os
 # import unittest
 import logging
@@ -27,6 +50,7 @@ from SlicerDevelopmentToolboxUtils.helpers import WatchBoxAttribute
 from SlicerDevelopmentToolboxUtils.widgets import TargetCreationWidget, XMLBasedInformationWatchBox
 from SlicerDevelopmentToolboxUtils.icons import Icons
 
+################################################################################
 
 #
 # ViewSeries
@@ -44,15 +68,23 @@ class ViewSeries(ScriptedLoadableModule):
     self.parent.dependencies = []  # TODO: add here list of module names that this module requires
     self.parent.contributors = ["Deepa Krishnaswamy (BWH)"]  # TODO: replace with "Firstname Lastname (Organization)"
     # TODO: update with short description of the module and a link to online module documentation
-    self.parent.helpText = """
-This is an example of a simple extension to view a set of series when a user clicks on a study.
-The views layout contains the number of series that are in the study. The studies are populated by entries in the DICOM database."
-"""
+    self.parent.helpText = """This is an example of a simple extension to view a set of series when a user clicks on a study.
+                              The views layout contains the number of series that are in the study.
+                              The studies are populated by entries in the DICOM database."""
     # TODO: replace with organization, grant and thanks
-    self.parent.acknowledgementText = """
-This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc., Andras Lasso, PerkLab,
-and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1.
-"""
+    self.parent.acknowledgementText = """This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc., Andras Lasso, PerkLab,
+                                         and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1."""
+
+    # # Add this test to the SelfTest module's list for discovery when the module
+    # # is created.  Since this module may be discovered before SelfTests itself,
+    # # create the list if it doesn't already exist.
+    # try:
+    #     slicer.selfTests
+    # except AttributeError:
+    #     slicer.selfTests = {}
+    #
+    # def runTest(self):
+    #     return
 
     # Additional initialization step after application startup is complete
     # slicer.app.connect("startupCompleted()", registerSampleData)
@@ -82,6 +114,11 @@ class ViewSeriesWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.studyListWidget = None
     self.selectPatientNameIndex = None
     self.selectStudyNameIndex = None
+    self.studyListWidgetNum = 0 # number of studies
+    self.seriesListNum = 0 # number of series
+    self.patientNames = None
+    self.db = slicer.dicomDatabase
+    self.patientList = None
 
   def selectPatient(self, item):
 
@@ -94,14 +131,14 @@ class ViewSeriesWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
       # Get the info from the slicer database
       # We need to find where the self.selectPatientName appears in the list of the patientNames
-      db = slicer.dicomDatabase
-      patientList = list(db.patients())
+      patientList = list(self.db.patients())
       patientNames = []
       for patient in range(0,len(patientList)):
-          studyList = db.studiesForPatient(patientList[patient])
-          seriesList = db.seriesForStudy(studyList[0])
-          fileList = db.filesForSeries(seriesList[0])
-          patientNames.append(db.fileValue(fileList[0], "0010,0010"))
+          studyList = self.db.studiesForPatient(patientList[patient])
+          seriesList = self.db.seriesForStudy(studyList[0])
+          fileList = self.db.filesForSeries(seriesList[0])
+          patientNames.append(self.db.fileValue(fileList[0], "0010,0010"))
+      self.patientNames = patientNames
 
       # Find which one it is in the list of patients
       index = patientNames.index(self.selectPatientName)
@@ -109,61 +146,62 @@ class ViewSeriesWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
       self.selectPatientNameIndex = index
 
       # Get the study names from the patient that was selected
-      studyList = db.studiesForPatient(patientList[index])
-      print ('studyList: ' + str(studyList)) # they are different here -- correct
+      studyList = self.db.studiesForPatient(patientList[index])
+      print ('studyList: ' + str(studyList)) # this is correct
 
-
-      ### first remove items from study list if they exist? ####
-      # https://stackoverflow.com/questions/23835847/how-to-remove-item-from-qlistwidget/23836142
-      removeItems = self.studyListWidget.selectedItems()
-      if not removeItems:
-          return
-      else:
-          for item in removeItems:
+      ### There must be a better way to do this! Fix later ###
+      # First remove the previous studies from the list
+      if not (self.studyListWidgetNum == 0): # if it's not equal to 0, remove items
+          num_items = self.studyListWidget.count
+          # get a list of the current items
+          items = []
+          for n in range(0,num_items):
+              items.append(self.studyListWidget.item(n))
+          # now remove these items from the list
+          for item in items:
               self.studyListWidget.takeItem(self.studyListWidget.row(item))
 
-      ####### Display and populate the study names ###########
-
-      ### Try with QListWidget - works ###
-      # https://www.tutorialspoint.com/pyqt/pyqt_qlistwidget.htm
-      studyListWidget = qt.QListWidget()
-      # studyListWidget = self.studyListWidget
+      # Add the new study items in
       for study in studyList:
-          studyListWidget.addItem(study) # but not different here when being displayed...
-      # Layout within the sample collapsible button
-      # studyLayout = qt.QFormLayout(studyCollapsibleButton)
-      # studyLayout = qt.QFormLayout(self.studyCollapsibleButton)
-      # studyLayout.addWidget(listWidget)
-      # self.layout.addWidget(listWidget) ### want to update this widget, not add a new one each time
+          self.studyListWidget.addItem(study)
+      self.studyListWidgetNum = (self.studyListWidget).count
+      print ('self.studyListWidgetNum: ' + str(self.studyListWidgetNum)) # this is correct, is 2
 
-      # see if this works?
-      # studyListWidget.update()
-      self.studyListWidget = studyListWidget
+      # need to update the layout??
 
-      # added?
+      # Select the study and then get the series and update the viewer.
+      self.studyListWidget.itemClicked.connect(self.selectStudy)
 
-
-      # check if a study name is clicked
-      studyListWidget.itemClicked.connect(self.selectStudy)
 
   def selectStudy(self, item):
 
     """This is called when the user selects a study name from the list."""
 
-    print ('Study ' + str(item.text()) + ' was clicked')
+    print ('Study ' + str(item.text()) + ' was clicked') # why is this printing out multiple times?
     self.selectStudyName = item.text()
 
     ### Get the index of the study that was clicked ###
     # Find which one it is in the list of studies
 
-    db = slicer.dicomDatabase
-    studyNames = db.studiesForPatient(self.selectPatientNameIndex)
+    # patientList = list(self.db.patients())
+    index = self.patientNames.index(self.selectPatientName)
+    # print ("index of the patient: " + str(index))
+
+    # print ('selectPatientNameIndex: ' + str(self.selectPatientNameIndex))
+    # studyNames = db.studiesForPatient(self.selectPatientNameIndex)
+    # studyNames = db.studiesForPatient(index)
+    # studyNames = self.db.studiesForPatient(patientList[index])
+    studyNames = self.db.studiesForPatient(self.patientList[index])
+    # print ('studyNames: ' + str(studyNames))
 
     index = studyNames.index(self.selectStudyName)
     studyNameClicked = studyNames[index]
     # Get the series names from the study that was selected
-    seriesList = db.seriesForStudy(studyNames[index])
+    seriesList = self.db.seriesForStudy(studyNames[index])
     print ('seriesList: ' + str(seriesList))
+    self.seriesListNum = len(seriesList)
+    print ('number of series: ' + str(self.seriesListNum))
+
 
     ### Get the data from each series as a node?? ###
 
@@ -179,18 +217,21 @@ class ViewSeriesWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     This creates a list of the patient names from the DICOM database, which the user then must select.
     """
 
+    # This adds the Reload & Test
+    ScriptedLoadableModuleWidget.setup(self)
+
     ### See if I can get list of patients from slicer DICOM database ###
-    # https://slicer.readthedocs.io/en/latest/developer_guide/script_repository.html#load-dicom-files-into-the-scene-from-a-folder
-    db = slicer.dicomDatabase
-    patientList = list(db.patients())
+    self.db = slicer.dicomDatabase
+    patientList = list(self.db.patients())
+    self.patientList = patientList
     # Get all the patient names in the database
     # For some reason, not all are listed - probably doesn't do nested names
     patientNames = []
     for patient in range(0,len(patientList)):
-        studyList = db.studiesForPatient(patientList[patient])
-        seriesList = db.seriesForStudy(studyList[0])
-        fileList = db.filesForSeries(seriesList[0])
-        patientNames.append(db.fileValue(fileList[0], "0010,0010"))
+        studyList = self.db.studiesForPatient(patientList[patient])
+        seriesList = self.db.seriesForStudy(studyList[0])
+        fileList = self.db.filesForSeries(seriesList[0])
+        patientNames.append(self.db.fileValue(fileList[0], "0010,0010"))
     print ('patientNames: ' + str(patientNames))
 
     ####### Displaying the patient names ###########
@@ -200,7 +241,6 @@ class ViewSeriesWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.layout.addWidget(patientCollapsibleButton)
 
     ### Try with QListWidget - works ###
-    # https://www.tutorialspoint.com/pyqt/pyqt_qlistwidget.htm
     patientListWidget = qt.QListWidget()
     for patient in patientNames:
         patientListWidget.addItem(patient)
@@ -220,35 +260,9 @@ class ViewSeriesWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.layout.addWidget(studyCollapsibleButton)
     self.studyCollapsibleButton = studyCollapsibleButton
 
-    # Added?
-    studyListWidget = qt.QListWidget()
-    self.studyListWidget = studyListWidget
-
-    studyLayout = qt.QFormLayout(studyCollapsibleButton)
-    studyLayout.addWidget(studyListWidget)
-
-    # patientLayout.addWidget(studyListWidget)
-
-
-
-
-    # ####### Displaying the Study names ###########
-    # # Collapsible button
-    # sampleCollapsibleButton = ctk.ctkCollapsibleButton()
-    # sampleCollapsibleButton.text = "Study names"
-    # self.layout.addWidget(sampleCollapsibleButton)
-    #
-    # ### Try with QListWidget - works ###
-    # # https://www.tutorialspoint.com/pyqt/pyqt_qlistwidget.htm
-    # listWidget = qt.QListWidget()
-    # listWidget.addItem("Item 1");
-    # listWidget.addItem("Item 2");
-    # listWidget.addItem("Item 3");
-    # # Layout within the sample collapsible button
-    # sampleLayout = qt.QFormLayout(sampleCollapsibleButton)
-    # sampleLayout.addWidget(listWidget)
-
-
+    self.studyListWidget = qt.QListWidget()
+    self.studyLayout = qt.QFormLayout(self.studyCollapsibleButton)
+    self.studyLayout.addWidget(self.studyListWidget)
 
     # ### Try wtih QListView ###
     # sampleLayout = qt.QVBoxLayout()
@@ -265,9 +279,6 @@ class ViewSeriesWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # listView.setModel(listModel)
     # # listView.show()
     # sampleLayout.addWidget(listView)
-
-
-
 
 #
 # ViewSeriesLogic
