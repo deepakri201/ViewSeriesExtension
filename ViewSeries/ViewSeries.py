@@ -9,23 +9,25 @@
 #
 # Notes:
 #     https://slicer.readthedocs.io/en/latest/developer_guide/script_repository.html#load-dicom-files-into-the-scene-from-a-folder
+#     https://github.com/pieper/CompareVolumes/blob/master/CompareVolumes.py 
+#     https://github.com/Slicer/Slicer/blob/master/Modules/Scripted/DICOMPlugins/DICOMScalarVolumePlugin.py
+#     https://github.com/QIICR/QuantitativeReporting/blob/87852c8460ed54de70e8c838f16ddf62da539546/DICOMPlugins/DICOMSegmentationPlugin.py#L699
+#     https://github.com/SlicerRt/SlicerRT/blob/master/DicomRtImportExport/DicomRtImportExportPlugin.py 
+#     https://discourse.slicer.org/t/windows-slicer-util-loadvolume-loads-wrong-volume/641 
+#     https://discourse.slicer.org/t/importing-dicom-files-in-my-own-module-c/12455/4 
 #     https://www.tutorialspoint.com/pyqt/pyqt_qlistwidget.htm
 #     https://stackoverflow.com/questions/22571706/how-to-list-all-items-from-qlistwidget
 #     https://stackoverflow.com/questions/23835847/how-to-remove-item-from-qlistwidget/23836142
 #
 # To do:
-#   Try with QListView instead of QListWidget
+#   Try with QListView instead of QListWidget?
+#   Had to install Quantitative Reporting and SlicerRT extensions manually - how to load extensions automatically?
 #
 # Deepa Krishnaswamy
 # December 2021
 # Brigham and Women's Hospital
 ################################################################################
 
-# import os
-# import unittest
-import logging
-# import vtk, qt, ctk, slicer
-# from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
 
 # from __future__ import division
@@ -40,15 +42,17 @@ import sitkUtils
 import datetime
 from slicer.ScriptedLoadableModule import *
 
-from mpReviewPreprocessor import mpReviewPreprocessorLogic
+# from mpReviewPreprocessor import mpReviewPreprocessorLogic
+#
+# from qSlicerMultiVolumeExplorerModuleWidget import qSlicerMultiVolumeExplorerSimplifiedModuleWidget
+# from qSlicerMultiVolumeExplorerModuleHelper import qSlicerMultiVolumeExplorerModuleHelper as MVHelper
+#
+# from SlicerDevelopmentToolboxUtils.mixins import ModuleWidgetMixin, ModuleLogicMixin
+# from SlicerDevelopmentToolboxUtils.helpers import WatchBoxAttribute
+# from SlicerDevelopmentToolboxUtils.widgets import TargetCreationWidget, XMLBasedInformationWatchBox
+# from SlicerDevelopmentToolboxUtils.icons import Icons
 
-from qSlicerMultiVolumeExplorerModuleWidget import qSlicerMultiVolumeExplorerSimplifiedModuleWidget
-from qSlicerMultiVolumeExplorerModuleHelper import qSlicerMultiVolumeExplorerModuleHelper as MVHelper
-
-from SlicerDevelopmentToolboxUtils.mixins import ModuleWidgetMixin, ModuleLogicMixin
-from SlicerDevelopmentToolboxUtils.helpers import WatchBoxAttribute
-from SlicerDevelopmentToolboxUtils.widgets import TargetCreationWidget, XMLBasedInformationWatchBox
-from SlicerDevelopmentToolboxUtils.icons import Icons
+from DICOMLib import DICOMPlugin
 
 ################################################################################
 
@@ -203,9 +207,52 @@ class ViewSeriesWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     print ('number of series: ' + str(self.seriesListNum))
 
 
-    ### Get the data from each series as a node?? ###
+    ### Get the data from each series as a node and store in self.volumeNodes
+    # Should not use slicer.util.loadVolume to load a DICOM file, as we may have a 
+    # series of DICOM files. Better to use he plugin below. 
+    
+    # for the scalar volumes 
+    DICOMScalarVolumePlugin = slicer.modules.dicomPlugins['DICOMScalarVolumePlugin']()
+    # for the SEG label volumes 
+    DICOMSegmentationPlugin = slicer.modules.dicomPlugins['DICOMSegmentationPlugin']()
+    # for RTSTRUCT 
+    DicomRtImportExportPlugin = slicer.modules.dicomPlugins['DicomRtImportExportPlugin']()
+    
+    self.volumeNodes = [] 
+    
+    for n in range(0,self.seriesListNum):
+        # Get the list of files 
+        fileList = self.db.filesForSeries(seriesList[n]) # should be n not 0 
+        print ('fileList: ' + str(fileList))
+        
+        # Check the modality, only load MR for now 
+        modality = self.db.fileValue(fileList[0], "0008,0060")
+        print ('modality: ' + str(modality))
+        if (modality=="CT" or modality == "MR"):
+            loadables = DICOMScalarVolumePlugin.examineFiles(fileList)
+            volume = DICOMScalarVolumePlugin.load(loadables[0]) # why 0? 
+            self.volumeNodes.append(volume)
+        # elif (modality=="SEG"):
+        #     loadables = DICOMSegmentationPlugin.examineFiles(fileList)
+        #     volume = DICOMSegmentationPlugin.load(loadables[0]) # why 0? 
+        #     self.volumeNodes.append(volume)
+        # elif (modality=="RTSTRUCT"):
+        #     loadables = DicomRtImportExportPlugin.examineForImport(fileList)
+        #     volume = DicomRtImportExportPlugin.load(loadables[0])
+        #     self.volumeNodes.append(volume)
 
+        
+        
+        
     ### Create as many views as the number of studies ###
+    self.cvLogic = CompareVolumes.CompareVolumesLogic()
+    # The data for each volume is stored in self.volumeNodes 
+    
+    # It will automatically figure out the layout in number of rowsxcolumns
+    self.cvLogic.viewerPerVolume(self.volumeNodes)
+    # self.cvLogic.viewerPerVolume(self.volumeNodes,\
+    #                              viewNames=self.sliceNames,\
+    #                              orientation=self.currentOrientation)
 
     ### Populate each view ###
 
@@ -284,63 +331,63 @@ class ViewSeriesWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 # ViewSeriesLogic
 #
 
-class ViewSeriesLogic(ScriptedLoadableModuleLogic):
-  """This class should implement all the actual
-  computation done by your module.  The interface
-  should be such that other python code can import
-  this class and make use of the functionality without
-  requiring an instance of the Widget.
-  Uses ScriptedLoadableModuleLogic base class, available at:
-  https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
-  """
-
-  def __init__(self):
-    """
-    Called when the logic class is instantiated. Can be used for initializing member variables.
-    """
-    ScriptedLoadableModuleLogic.__init__(self)
-
-  def setDefaultParameters(self, parameterNode):
-    """
-    Initialize parameter node with default settings.
-    """
-    if not parameterNode.GetParameter("Threshold"):
-      parameterNode.SetParameter("Threshold", "100.0")
-    if not parameterNode.GetParameter("Invert"):
-      parameterNode.SetParameter("Invert", "false")
-
-  def process(self, inputVolume, outputVolume, imageThreshold, invert=False, showResult=True):
-    """
-    Run the processing algorithm.
-    Can be used without GUI widget.
-    :param inputVolume: volume to be thresholded
-    :param outputVolume: thresholding result
-    :param imageThreshold: values above/below this threshold will be set to 0
-    :param invert: if True then values above the threshold will be set to 0, otherwise values below are set to 0
-    :param showResult: show output volume in slice viewers
-    """
-
-    if not inputVolume or not outputVolume:
-      raise ValueError("Input or output volume is invalid")
-
-    import time
-    startTime = time.time()
-    logging.info('Processing started')
-
-    # Compute the thresholded output volume using the "Threshold Scalar Volume" CLI module
-    cliParams = {
-      'InputVolume': inputVolume.GetID(),
-      'OutputVolume': outputVolume.GetID(),
-      'ThresholdValue' : imageThreshold,
-      'ThresholdType' : 'Above' if invert else 'Below'
-      }
-    cliNode = slicer.cli.run(slicer.modules.thresholdscalarvolume, None, cliParams, wait_for_completion=True, update_display=showResult)
-    # We don't need the CLI module node anymore, remove it to not clutter the scene with it
-    slicer.mrmlScene.RemoveNode(cliNode)
-
-    stopTime = time.time()
-    logging.info('Processing completed in {0:.2f} seconds'.format(stopTime-startTime))
-
+# class ViewSeriesLogic(ScriptedLoadableModuleLogic):
+#   """This class should implement all the actual
+#   computation done by your module.  The interface
+#   should be such that other python code can import
+#   this class and make use of the functionality without
+#   requiring an instance of the Widget.
+#   Uses ScriptedLoadableModuleLogic base class, available at:
+#   https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
+#   """
 #
-# ViewSeriesTest
+#   def __init__(self):
+#     """
+#     Called when the logic class is instantiated. Can be used for initializing member variables.
+#     """
+#     ScriptedLoadableModuleLogic.__init__(self)
 #
+#   def setDefaultParameters(self, parameterNode):
+#     """
+#     Initialize parameter node with default settings.
+#     """
+#     if not parameterNode.GetParameter("Threshold"):
+#       parameterNode.SetParameter("Threshold", "100.0")
+#     if not parameterNode.GetParameter("Invert"):
+#       parameterNode.SetParameter("Invert", "false")
+#
+#   def process(self, inputVolume, outputVolume, imageThreshold, invert=False, showResult=True):
+#     """
+#     Run the processing algorithm.
+#     Can be used without GUI widget.
+#     :param inputVolume: volume to be thresholded
+#     :param outputVolume: thresholding result
+#     :param imageThreshold: values above/below this threshold will be set to 0
+#     :param invert: if True then values above the threshold will be set to 0, otherwise values below are set to 0
+#     :param showResult: show output volume in slice viewers
+#     """
+#
+#     if not inputVolume or not outputVolume:
+#       raise ValueError("Input or output volume is invalid")
+#
+#     import time
+#     startTime = time.time()
+#     logging.info('Processing started')
+#
+#     # Compute the thresholded output volume using the "Threshold Scalar Volume" CLI module
+#     cliParams = {
+#       'InputVolume': inputVolume.GetID(),
+#       'OutputVolume': outputVolume.GetID(),
+#       'ThresholdValue' : imageThreshold,
+#       'ThresholdType' : 'Above' if invert else 'Below'
+#       }
+#     cliNode = slicer.cli.run(slicer.modules.thresholdscalarvolume, None, cliParams, wait_for_completion=True, update_display=showResult)
+#     # We don't need the CLI module node anymore, remove it to not clutter the scene with it
+#     slicer.mrmlScene.RemoveNode(cliNode)
+#
+#     stopTime = time.time()
+#     logging.info('Processing completed in {0:.2f} seconds'.format(stopTime-startTime))
+#
+# #
+# # ViewSeriesTest
+# #
